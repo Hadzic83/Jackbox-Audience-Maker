@@ -11,6 +11,12 @@ _Generate an audience for Jackbox games._
 
 Some Jackbox games require a certain number of audience members to achieve trophies. This application creates the desired number of audience members for your session. Simply enter the room code and number of audience members to create.
 
+## Screenshots
+
+![Application](documentation/application.png)
+
+![Game](documentation/game.jpg)
+
 ## Acknowledgements
 
 This project is made possible by:
