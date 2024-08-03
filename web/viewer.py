@@ -1,16 +1,19 @@
 ########################################################################################################################
 # Jackbox Audience Maker > Web > Viewer
-# Version 2024.08.02
+# Version 2024.08.03
 ########################################################################################################################
 # Copyright (c) 2024 Orobas
 # https://www.orobas.com.au
 
 
-from asyncio import sleep as async_sleep
+from os import remove as os_remove
 from os.path import dirname as path_directory, expanduser as path_expand, join as path_join, realpath as path_real
 from platform import system as platform_system
+from selenium.common.exceptions import TimeoutException
 from selenium.webdriver import Chrome as ChromeDriver, ChromeOptions, ChromeService
 from selenium.webdriver.common.by import By as FindBy
+from selenium.webdriver.support import expected_conditions as expect
+from selenium.webdriver.support.ui import WebDriverWait
 from uuid import uuid4
 
 
@@ -47,6 +50,25 @@ class Viewer:
     # region Properties
 
     @property
+    def __agent__(self) -> str:
+        """
+        Gets the user agent for the current operating system.
+        :return: The user agent for the current operating system.
+        :raises RuntimeError: If the current operating system is not supported.
+        """
+
+        if self.os_linux:
+            return Viewer.__OPTION_AGENT_LINUX
+
+        if self.os_macintosh:
+            return Viewer.__OPTION_AGENT_MACINTOSH
+
+        if self.os_windows:
+            return Viewer.__OPTION_AGENT_WINDOWS
+
+        raise RuntimeError("Operating system is not supported.")
+
+    @property
     def __bin__(self) -> str:
         """
         Gets the path to the bin directory.
@@ -65,6 +87,7 @@ class Viewer:
 
         if not self.__browser:
             self.__browser = ChromeDriver(self.__options__, self.__service__)
+            self.__browser.set_window_size(720, 576)
 
         return self.__browser
 
@@ -78,11 +101,10 @@ class Viewer:
         if not Viewer.__options:
             Viewer.__options = ChromeOptions()
             Viewer.__options.binary_location = self.path_browser
-            Viewer.__options.add_argument("--no-sandbox")
-            Viewer.__options.add_argument("--disable-dev-shm-usage")
+            Viewer.__options.add_argument(self.__agent__)
 
             if Viewer.__RUN_HEADLESS:
-                Viewer.__options.add_argument("--headless")
+                Viewer.__options.add_argument(Viewer.__OPTION_HEADLESS)
 
         return Viewer.__options
 
@@ -182,25 +204,38 @@ class Viewer:
         Join a game.
         :param room: Room code.
         :return: This instance.
+        :throws RuntimeError: If the game could not be joined.
         """
 
         self.__browser__.get(Viewer.__JOIN_URL)
 
-        if Viewer.__RUN_HEADLESS:
-            self.__browser__.execute_script(f"document.getElementById('{Viewer.__JOIN_ROOM}').value='{room}';")
-            self.__browser__.execute_script(f"document.getElementById('{Viewer.__JOIN_NAME}').value='{uuid4().hex}';")
-        else:
-            self.__browser__.find_element(FindBy.ID, Viewer.__JOIN_ROOM).send_keys(room)
-            self.__browser__.find_element(FindBy.ID, Viewer.__JOIN_NAME).send_keys(uuid4().hex)
+        name = uuid4().hex
+        file = path_join(self.__bin__, f"{name}{Viewer.__JOIN_EXTENSION}")
+        wait = WebDriverWait(self.__browser__, Viewer.__JOIN_WAIT)
 
-        await async_sleep(Viewer.__JOIN_WAIT)
+        try:
+            wait.until(expect.element_to_be_clickable((FindBy.ID, Viewer.__JOIN_ROOM))).send_keys(room)
+            wait.until(expect.element_to_be_clickable((FindBy.ID, Viewer.__JOIN_NAME))).send_keys(name)
+        except TimeoutException:
+            raise RuntimeError("Game could not be joined.")
 
-        if Viewer.__RUN_HEADLESS:
-            self.__browser__.execute_script(f"document.getElementById('{Viewer.__JOIN_BUTTON}').click();")
-        else:
-            self.__browser__.find_element(FindBy.ID, Viewer.__JOIN_BUTTON).click()
+        attempts = Viewer.__JOIN_ATTEMPTS
 
-        return self
+        while attempts > 0:
+            if Viewer.__RUN_DEBUGGING:
+                self.__browser__.save_screenshot(file)
+
+            try:
+                wait.until(expect.element_to_be_clickable((FindBy.ID, Viewer.__JOIN_BUTTON))).click()
+
+                if Viewer.__RUN_DEBUGGING:
+                    os_remove(file)
+
+                return self
+            except TimeoutException:
+                attempts -= 1
+
+        raise RuntimeError("Game could not be joined.")
 
     # endregion
 
@@ -266,9 +301,19 @@ class Viewer:
     Driver file for the Windows operating system.
     """
 
+    __JOIN_ATTEMPTS = 3
+    """
+    The number of times to attempt to join a game before failing.
+    """
+
     __JOIN_BUTTON = "button-join"
     """
     Identifier of the HTML element that is clicked to join the game.
+    """
+
+    __JOIN_EXTENSION = ".png"
+    """
+    File extension for screenshots.
     """
 
     __JOIN_NAME = "username"
@@ -291,6 +336,35 @@ class Viewer:
     Amount of time, in seconds, to wait before clicking the button to join the game.
     """
 
+    __OPTION_AGENT_LINUX = "--user-agent=" +\
+                           "Mozilla/5.0 (X11; Linux x86_64) " +\
+                           "AppleWebKit/537.36 (KHTML, like Gecko) " +\
+                           "Chrome/123.0.0.0 Safari/537.36"
+    """
+    User agent for Linux operating systems.
+    """
+
+    __OPTION_AGENT_MACINTOSH = "--user-agent=" +\
+                               "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) " +\
+                               "AppleWebKit/537.36 (KHTML, like Gecko) " +\
+                               "Chrome/123.0.0.0 Safari/537.36"
+    """
+    User agent for Macintosh operating systems.
+    """
+
+    __OPTION_AGENT_WINDOWS = "--user-agent=" +\
+                             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +\
+                             "AppleWebKit/537.36 (KHTML, like Gecko) " +\
+                             "Chrome/123.0.0.0 Safari/537.36"
+    """
+    User agent for Windows operating systems.
+    """
+
+    __OPTION_HEADLESS = "--headless=new"
+    """
+    Hides the browser's interface.
+    """
+
     __OS_LINUX = "Linux"
     """
     Linux operating system identifier.
@@ -306,7 +380,12 @@ class Viewer:
     Windows operating system identifier.
     """
 
-    __RUN_HEADLESS = False
+    __RUN_DEBUGGING = False
+    """
+    True to save a screenshot if the browser if the game cannot be loaded.
+    """
+
+    __RUN_HEADLESS = True
     """
     True to run in headless mode; otherwise, false.
     """
